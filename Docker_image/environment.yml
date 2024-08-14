@@ -4,7 +4,7 @@ channels:
   - salilab
   - bioconda
 dependencies:
-  - python=3.7
+  - python=3.11
   - pdbfixer
   - numpy
   - openmm
