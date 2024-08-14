@@ -66,7 +66,7 @@ ADD . $HOME/data/
 # RUN echo "sh /replace_files.sh" >> ~/.bashrc
 
 # RCD
-RUN mamba install -c intel mkl # This is here, libraries are missing if I leave it in the .yml
+RUN mamba install -c https://software.repos.intel.com/python/conda/ mkl # This is here, libraries are missing if I leave it in the .yml
 ENV LD_LIBRARY_PATH "$LD_LIBRARY_PATH:/mamba/lib/"
 RUN wget -qO- http://chaconlab.org`wget -qO- http://chaconlab.org/modeling/rcd/rcd-download|grep txz|grep uk-button| cut -f4 -d\"` | tar Jxf - && \
     cp RCD_v1.40_Linux_20190228/bin/rcd /usr/local/bin && \
