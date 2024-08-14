@@ -1,4 +1,4 @@
-FROM ubuntu:bionic
+FROM --platform=linux/amd64 ubuntu:bionic
 ENV DEBIAN_FRONTEND=noninteractive
 
 # The following line is important for singularity
