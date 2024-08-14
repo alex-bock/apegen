@@ -28,11 +28,13 @@ RUN apt-get update && \
         libpng-dev \
         libpython-dev \
         libxml2-dev \
-        python-pip \
         python-pmw \
         swig \
         wget \
         vim
+
+RUN apt-get -y install python-pip
+
 
 RUN ["/bin/bash", "-c", "wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge-pypy3-Linux-x86_64.sh"]
 RUN chmod 0755 Miniforge-pypy3-Linux-x86_64.sh
