@@ -1,4 +1,4 @@
-FROM ubuntu:bionic
+FROM --platform=linux/amd64 ubuntu:bionic
 ENV DEBIAN_FRONTEND=noninteractive
 
 # The following line is important for singularity
@@ -28,11 +28,13 @@ RUN apt-get update && \
         libpng-dev \
         libpython-dev \
         libxml2-dev \
-        python-pip \
         python-pmw \
         swig \
         wget \
         vim
+
+RUN apt-get -y install python-pip
+
 
 RUN ["/bin/bash", "-c", "wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge-pypy3-Linux-x86_64.sh"]
 RUN chmod 0755 Miniforge-pypy3-Linux-x86_64.sh
@@ -64,7 +66,7 @@ ADD . $HOME/data/
 # RUN echo "sh /replace_files.sh" >> ~/.bashrc
 
 # RCD
-RUN mamba install -c intel mkl # This is here, libraries are missing if I leave it in the .yml
+RUN mamba install -c https://software.repos.intel.com/python/conda/ mkl # This is here, libraries are missing if I leave it in the .yml
 ENV LD_LIBRARY_PATH "$LD_LIBRARY_PATH:/mamba/lib/"
 RUN wget -qO- http://chaconlab.org`wget -qO- http://chaconlab.org/modeling/rcd/rcd-download|grep txz|grep uk-button| cut -f4 -d\"` | tar Jxf - && \
     cp RCD_v1.40_Linux_20190228/bin/rcd /usr/local/bin && \
