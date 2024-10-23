@@ -20,6 +20,8 @@ from itertools import zip_longest
 from pdbfixer import PDBFixer
 from openmm.app import PDBFile
 
+import pymol2
+
 ## MACROS
 
 # set verbose
@@ -95,7 +97,7 @@ def initialize_dir(dir_name):
 	elif type(dir_name) == list:
 		for dir in dir_name:
 			initialize_dir(dir)
-		
+
 def copy_file(src, dst):
 	shutil.copy(src, dst)
 
@@ -118,7 +120,7 @@ def remove_file(filename):
 def remove_dirs(directory_list):
 	for directory in directory_list:
 		shutil.rmtree(directory)
-	
+
 def add_sidechains(pdb_filename, filestore, add_hydrogens="Yes", peptide_idx=-1, remove_heterogens=True,
 				   add_solvent=False, keep_IDs=False):
 
@@ -131,13 +133,13 @@ def add_sidechains(pdb_filename, filestore, add_hydrogens="Yes", peptide_idx=-1,
 	if add_solvent: fixer.addSolvent(fixer.topology.getUnitCellDimensions())
 	if peptide_idx != -1:
 			pdb_filename = filestore + '/02_add_sidechains/PTMed_' + str(peptide_idx) + '.pdb'
-	
+
 	fp = open(pdb_filename, 'w')
 	PDBFile.writeFile(fixer.topology, fixer.positions, fp, keepIds=keep_IDs)
 	fp.close()
 
 	if peptide_idx != -1:
-		copy_file(filestore + '/02_add_sidechains/PTMed_' + str(peptide_idx) + '.pdb', 
+		copy_file(filestore + '/02_add_sidechains/PTMed_' + str(peptide_idx) + '.pdb',
 							filestore + '/03_PTMed_peptides/PTMed_' + str(peptide_idx) + '.pdb')
 	return pdb_filename
 
@@ -218,7 +220,7 @@ def filter_chains(pdb_file, chains, dst):
 		file.write(''.join(filtered))
 	file.close()
 
-def remove_remarks_and_others_from_pdb(pdb_file, records=('ATOM', 'TER', 'END ')): 
+def remove_remarks_and_others_from_pdb(pdb_file, records=('ATOM', 'TER', 'END ')):
 	fhandle = open(pdb_file, 'r')
 	for line in fhandle:
 		if line.startswith(records):
@@ -284,7 +286,7 @@ def pretty_print_analytics(csv_location, verbose=True):
 		print(results_csv.to_markdown(index=False))
 	return results_csv
 
-def score_sequences(seq1, seq2, anchor_1, anchor_2, matrix, gap_penalty, norm):
+def score_sequences(seq1, seq2, anchor_1, anchor_2, matrix, gap_penalty, norm, slice=None):
 
 	# Initial checks
 	anchor_1_idx = anchor_1 + (len(seq2) - len(seq2.lstrip('-'))) - 1
@@ -300,6 +302,10 @@ def score_sequences(seq1, seq2, anchor_1, anchor_2, matrix, gap_penalty, norm):
 	if (anchor_1 == 1) and ((len(seq2) - len(seq2.lstrip('-'))) > 2): # When N-anchor is found at pos 1, then we cannot add more than 2 aa before it.
 		return -1000
 
+	if slice is not None:
+		seq1 = seq1[slice]
+		seq2 = seq2[slice]
+
 	# Actual scoring
 	score = 0
 	num_gaps = 0
@@ -311,7 +317,7 @@ def score_sequences(seq1, seq2, anchor_1, anchor_2, matrix, gap_penalty, norm):
 	return score + num_gaps*gap_penalty
 
 def anchor_alignment(seq1, seq2, anchor_diff1, anchor_diff2):
-	
+
 	# Actual alignment part
 	extra_in_beginning = ''.join('-'*abs(anchor_diff1))
 	extra_in_end = ''.join('-'*abs(anchor_diff2))
@@ -345,8 +351,61 @@ def calculate_anchors_given_alignment(seq, seq_template, anchor_1, anchor_2):
 	extra_in_end = len(seq)-len(seq.rstrip('-'))
 	extra_in_end_template = len(seq_template)-len(seq_template.rstrip('-'))
 	anchor_1 = anchor_1 - extra_in_beginning + extra_in_beginning_template
-	anchor_2 = anchor_2 - extra_in_beginning + extra_in_beginning_template - extra_in_end + extra_in_end_template 
+	anchor_2 = anchor_2 - extra_in_beginning + extra_in_beginning_template - extra_in_end + extra_in_end_template
 	return (anchor_1, anchor_2)
+
+def synthesize_peptide_from_segments(segment_templates, slices):
+
+	p1 = pymol2.PyMOL()
+	p1.start()
+
+	n_segments = len(segment_templates)
+
+	# isolate C chains from each template structure
+	for i in range(n_segments):
+		print(segment_templates[i])
+		p1.cmd.load(
+			os.path.join("new_templates_final", segment_templates[i].pdb_code),
+			f"template_{i}"
+		)
+		selection = f"template_{i} & chain C & (name " + " or name ".join(["N", "CA", "C", "O", "CB"]) + ")"
+		print(selection)
+		p1.cmd.create(f"peptide_{i}", selection)
+
+	# iteratively superpose peptides (sequence-agnostic (cf. `align`) yields
+	# anecdotally better results)
+	for i in range(n_segments - 1):
+		p1.cmd.pair_fit(f"peptide_{i + 1}////CA", f"peptide_{i}////CA")
+
+	# extract segments from templates
+	for i in range(n_segments):
+		p1.cmd.create(
+			f"segment_{i}",
+			f"peptide_{i} & resi {slices[i].start + 1}-{slices[i].stop}"
+		)
+
+	# (maybe) further translate such that the first CA of segment i is placed at
+	# the CA following segemnt i - 1 in its peptide (change seems to be minimal
+	# though - `super` gets it most of the way there)
+	# translator = np.zeros(3)
+	# for i in range(len(segment_templates) - 1):
+	# 	target_pos = p1.cmd.get_coords(f"/peptide_{i}////CA", 1)[slices[i + 1].start]
+	# 	print(target_pos)
+	# 	p1.cmd.super(f"peptide_{i + 1}", f"peptide_{i}")
+	# 	curr_pos = p1.cmd.get_coords(f"/peptide_{i + 1}////CA", 1)[slices[i + 1].start]
+	# 	translator += (target_pos - curr_pos)
+	# 	print(translator)
+	# 	p1.cmd.translate(list(translator), f"peptide_{i + 1}")
+	# 	print(p1.cmd.get_coords(f"/peptide_{i + 1}////CA", 1)[slices[i + 1].start])
+
+	# merge segments into one object and save
+	p1.cmd.create(
+		"peptide",
+		" OR ".join([f"segment_{i}" for i in range(len(segment_templates))])
+	)
+	p1.cmd.save(os.path.join("new_templates_final", "peptide.pdb"), "peptide")
+
+	return
 
 ## RESIDUE RENAMING AFTER SMINA FLEXIBILITY OUTPUT
 
@@ -369,7 +428,7 @@ def csp_solver(edge_list, residue, atom_indexes, CA_loc, C_loc):
 				 'GLY':[["CA", "C"]],
 				 'PRO':[["CA", "C", "CB", "CG", "CD"]],
 				 'ARG':[["CA", "C", "CB", "CG", "CD", "NE", "HE", "CZ", "NH1", "HH11", "HH12", "NH2", "HH21", "HH22"]],
-				 'HIS':[["CA", "C", "CB", "CG", "ND1", "HD1", "CE1", "NE2", "CD2"], 
+				 'HIS':[["CA", "C", "CB", "CG", "ND1", "HD1", "CE1", "NE2", "CD2"],
 						["CA", "C", "CB", "CG", "ND1", "HE2", "CE1", "NE2", "CD2"]],
 				 'LYS':[["CA", "C", "CB", "CG", "CD", "CE", "NZ", "HZ1", "HZ2", "HZ3"]],
 				 'ASP':[["CA", "C", "CB", "CG", "OD1", "OD2"]],
@@ -466,7 +525,7 @@ def merge_connect_fields(list_of_pdbs, dst):
 	pdb_file.close()
 
 def extract_anchors_PMBEC(peptide, MHC, frequencies):
-	
+
 	# Load and set the SMM matrix
 	smm_matrix = pd.read_csv('./helper_files/PMBEC/' + MHC + '.txt', sep = '\t', skiprows=1, header = None, nrows=20).transpose()
 	new_header = smm_matrix.iloc[0] #grab the first row for the header
@@ -475,7 +534,7 @@ def extract_anchors_PMBEC(peptide, MHC, frequencies):
 	smm_matrix = smm_matrix.reset_index().rename(columns={'index': 'position'})
 
 	matrix = frequencies[(frequencies['allele'] == MHC) & (frequencies['length'] == 9)]
-	
+
 	# N-termini_candidate_1
 	first_part_of_peptide = peptide[:3]
 	pep_sequence = list(first_part_of_peptide)
@@ -489,7 +548,7 @@ def extract_anchors_PMBEC(peptide, MHC, frequencies):
 	potential_pos_13 = smm_matrix[smm_matrix['position'] == 4][pep_sequence[2]].values[0]
 	inertia_pos_13 = smm_matrix[smm_matrix['position'] == 3][pep_sequence[2]].values[0]
 	will_13 = potential_pos_13 - inertia_pos_13
-	
+
 	# N-termini_candidate_3
 	first_part = matrix[(matrix['position'].isin([1,2,3,4,5]))]
 	anchor_1 = first_part.iloc[:, 5:].max(1).argmax() + 1
@@ -507,7 +566,7 @@ def extract_anchors_PMBEC(peptide, MHC, frequencies):
 	inertia_pos_35 = smm_matrix[smm_matrix['position'] == 5][pep_sequence[4]].values[0]
 	filling_pos_35 = smm_matrix[smm_matrix['position'] == 5][pep_sequence[5]].values[0]
 	will_35 = potential_pos_35 - inertia_pos_35 + filling_pos_35
-	
+
 	# C-termini_candidate
 	second_part_of_peptide = peptide[7:]
 	second_part = matrix[(matrix['position'] >= 8) & (matrix['position'] <= len(peptide))]
@@ -539,9 +598,9 @@ def predict_anchors_PMBEC(peptide, MHC):
 	frequencies = frequencies[(frequencies['cutoff_fraction'] == 0.01)]
 	frequencies['X'] = np.zeros(frequencies.shape[0])
 
-	frequencies_alleles = os.listdir('./helper_files/PMBEC/') 
+	frequencies_alleles = os.listdir('./helper_files/PMBEC/')
 	frequencies_alleles = [x.split('.')[0] for x in frequencies_alleles]
-	
+
 	if (len(peptide) <= 7) or MHC not in frequencies_alleles:
 		anchors = "2," + str(len(peptide))
 		anchor_status = "Not Known"

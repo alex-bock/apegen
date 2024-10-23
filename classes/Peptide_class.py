@@ -80,7 +80,7 @@ class Peptide(object):
 			       primary_anchors=primary_anchors, secondary_anchors=secondary_anchors, 
 			       tilted_sequence=tilted_sequence, index=peptide_index)
 
-	def get_peptide_templates(self, receptor_allotype, anchors, max_no_templates, similarity_threshold, cv=''):
+	def get_peptide_templates(self, receptor_allotype, anchors, max_no_templates, similarity_threshold, cv='', slice=None):
 
 		if verbose(): print("\nProcessing Peptide Input: " + self.sequence)
 
@@ -89,6 +89,7 @@ class Peptide(object):
 
 		# removes pdb code of peptide in order to cross validate (just for testing)
 		if cv != '': templates = templates[~templates['pdb_code'].str.contains(cv, case=False)]
+		templates = templates[templates.peptide != self.sequence]
 
 		# Current policy of selecting/chosing peptide templates is:
 		# 1) Feature filtering to predict which are the anchors (when they are not given)
@@ -136,7 +137,7 @@ class Peptide(object):
 		anchor_1_list = templates['Major_anchor_1'].tolist()
 		anchor_2_list = templates['Major_anchor_2'].tolist()
 		blosum_62 = Align.substitution_matrices.load("BLOSUM62")
-		self_score = score_sequences(self.sequence, self.sequence, 0, 0, matrix=blosum_62, gap_penalty=0, norm=1) # Self score that does not care about anchor placements.
+		self_score = score_sequences(self.sequence, self.sequence, 0, 0, matrix=blosum_62, gap_penalty=0, norm=1, slice=slice) # Self score that does not care about anchor placements.
 		if anchor_status == "Known":
 			Anchor_diff_1 = templates['Anchor_diff_1'].tolist()
 			Anchor_diff_2 = templates['Anchor_diff_2'].tolist()
@@ -145,7 +146,7 @@ class Peptide(object):
 																				 Anchor_diff_1[i], Anchor_diff_2[i])
 				score_list.append(score_sequences(temp_sequence_in_question, temp_template_sequence,
 												  anchor_1_list[i], anchor_2_list[i],  
-											      matrix=blosum_62, gap_penalty=0, norm=self_score))
+											      matrix=blosum_62, gap_penalty=0, norm=self_score, slice=slice))
 		else:
 			anchor_1_diff_list = []
 			tilted_sequences_list = []
@@ -166,7 +167,7 @@ class Peptide(object):
 						temp_template_sequence = alignment.seqB
 						temp_score = score_sequences(temp_sequence_in_question, temp_template_sequence,
 													 anchor_1_list[i], anchor_2_list[i], 
-											         matrix=blosum_62, gap_penalty=-0.26, norm=self_score)
+											         matrix=blosum_62, gap_penalty=-0.26, norm=self_score, slice=slice)
 						if max_score < temp_score:
 							max_score = temp_score
 							best_sequence = temp_sequence_in_question
