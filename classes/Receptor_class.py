@@ -219,6 +219,8 @@ class Receptor(object):
 		templates = pd.read_csv("./helper_files/Proper_files/Template_DB.csv")
 
 		if cv != '': templates = templates[~templates['pdb_code'].str.contains(cv, case=False)]
+		# ensure we are only choosing receptor templates with peptides of equal length (TODO: revisit)
+		templates = templates[templates.peptide.str.len() == len(peptide_sequence)]
 
 		if(allotype in templates['MHC'].tolist()):
 
