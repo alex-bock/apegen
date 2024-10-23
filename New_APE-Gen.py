@@ -6,7 +6,7 @@ from helper_scripts.Ape_gen_macros import apply_function_to_file, replace_chains
 											copy_batch_of_files, split_receptor_and_peptide,	   \
 											remove_remarks_and_others_from_pdb, replace_HETATM,    \
 											delete_elements, split_to_equal_parts, remove_dirs,    \
-											verbose, set_verbose                  \
+											verbose, set_verbose, synthesize_peptide_from_segments \
 
 from classes.Peptide_class import Peptide
 from classes.Receptor_class import Receptor
@@ -122,7 +122,9 @@ def peptide_refinement_and_scoring(index, template_index, new_index, rcd_num_loo
 
 	# 5. Anchor filtering (based on anchor tolerance argument) (improvement from previous version)
 	peptide_is_not_valid = peptide.compute_anchor_tolerance(new_filestore, receptor, peptide_template_anchors_xyz, anchor_tol, rcd_num_loops)
-	if(peptide_is_not_valid): return
+	if(peptide_is_not_valid):
+		print("lalala")
+		return
 
 	# 6. Fix flexible residue co-ordinates if receptor is flexible
 	if receptor.doMinimization:
@@ -135,9 +137,11 @@ def peptide_refinement_and_scoring(index, template_index, new_index, rcd_num_loo
 	# Done!
 	return
 
-def backbone_sampling(template_index, peptide_templates, receptor_template, peptide, anchors, anchor_status, anchor_selection, rcd_num_loops, RCD_dist_tol, filestore):		
+def backbone_sampling(template_index, peptide_templates, receptor_template, peptide, anchors, anchor_status, anchor_selection, rcd_num_loops, RCD_dist_tol, filestore, superpose_peptide):		
 		
 	# Routine that initializes a peptide template and samples backbones based no that template
+
+	import pdb; pdb.set_trace()
 
 	# 1. Initialize appropriate directories
 	initialize_dir([filestore + '/1_alignment_files/' + str(template_index),
@@ -148,7 +152,7 @@ def backbone_sampling(template_index, peptide_templates, receptor_template, pept
 	peptide_template = peptide.initialize_peptide_template(peptide_templates.iloc[[template_index]], anchors, anchor_status)
 
 	# 3. Alignment and preparing input for RCD
-	receptor_template.align(reference=peptide_template, filestore=filestore, template_index=template_index)
+	receptor_template.align(reference=peptide_template, filestore=filestore, template_index=template_index, superpose_peptide=superpose_peptide)
 
 	# 4. Get peptide template anchor positions for anchor tolerance filtering
 	#anchor_filtering_data_dict[template_index] = peptide_template.set_anchor_xyz(anchor_selection, peptide)
@@ -243,6 +247,8 @@ def apegen(args):
 	# --cv: ONLY FOR TESTING (to be removed in the final version)
 	cv = args.cv
 
+	segment_idx = args.segment_idx
+
 	# Directory to store intermediate files
 	temp_files_storage = args.dir
 	initialize_dir(temp_files_storage)
@@ -275,10 +281,52 @@ def apegen(args):
 	receptor.useSMINA = min_with_smina
 	
 	# Peptide Template and Receptor Template are pMHC complexes	
-	peptide_templates, anchors, anchor_status = peptide.get_peptide_templates(receptor.allotype, anchors, max_no_templates, similarity_threshold, cv)
-	if peptide_templates.empty:
-		print("No available peptides for the given peptide-MHC input! Aborting...")
-		sys.exit(0)
+	if segment_idx is None:
+		peptide_templates, anchors, anchor_status = peptide.get_peptide_templates(receptor.allotype, anchors, max_no_templates, similarity_threshold, cv)
+		if peptide_templates.empty:
+			print("No available peptides for the given peptide-MHC input! Aborting...")
+			sys.exit(0)
+		peptide_templates = peptide_templates.head(1)
+	else:
+		segment_templates = []
+		segment_slices = []
+		for i in range(len(segment_idx)):
+			if i == len(segment_idx) - 1:
+				idx = slice(segment_idx[i], len(peptide.sequence))
+			else:
+				idx = slice(segment_idx[i], segment_idx[i + 1])
+			print(idx)
+			peptide_templates, these_anchors, anchor_status = peptide.get_peptide_templates(receptor.allotype, anchors, max_no_templates, similarity_threshold, cv=cv, slice=idx)
+			segment_templates.append(peptide_templates.iloc[0])
+			segment_slices.append(idx)
+		synthesize_peptide_from_segments(segment_templates, segment_slices)
+		peptide_seq = "".join([segment_templates[i].peptide[segment_slices[i]] for i in range(len(segment_idx))])
+		major_anchor_1, major_anchor_2 = int(these_anchors.split(",")[0]), int(these_anchors.split(",")[1])
+		avg_mhc_similarity = np.mean([segment_templates[i].MHC_similarity for i in range(len(segment_idx))])
+		avg_peptide_similarity = np.mean([segment_templates[i].Peptide_similarity for i in range(len(segment_idx))])
+		avg_similarity_score = np.mean([segment_templates[i].Similarity_score for i in range(len(segment_idx))])
+		peptide_templates = pd.DataFrame(
+			dict(
+				pdb_code="peptide.pdb",
+				MHC=None,
+				peptide=peptide_seq,
+				peptide_length=len(peptide_seq),
+				Major_anchors=these_anchors,
+				Secondary_anchors=",".join(sorted(list(set().union(*[segment_templates[i].Secondary_anchors.split(",") for i in range(len(segment_idx))])))),
+				anchor_diff=major_anchor_2 - major_anchor_1,
+				MHC_similarity=avg_mhc_similarity,
+				Major_anchor_1=major_anchor_1,
+				Major_anchor_2=major_anchor_2,
+				Anchor_diff_1=0,
+				Anchor_diff_2=0,
+				Peptide_similarity=avg_peptide_similarity,
+				Similarity_score=avg_similarity_score
+			),
+			index=[0]
+		)
+		anchors = these_anchors
+		print(peptide_templates)
+	import pdb; pdb.set_trace()
 
 	# Prepare receptor for scoring (generate .pdbqt for SMINA):
 	receptor_template = pMHC(pdb_filename=receptor_template_file, peptide=peptide, receptor=receptor)
@@ -298,10 +346,11 @@ def apegen(args):
 	filestore = temp_files_storage + "/results/"
 	
 	# 2. BACKBONE SAMPLING LOOP
-	arg_list = list(map(lambda template_index: (template_index, peptide_templates, receptor_template, peptide, anchors, anchor_status, anchor_selection, rcd_num_loops, RCD_dist_tol, filestore), 
-						list(range(peptide_templates.shape[0]))))
-	with WorkerPool(n_jobs=num_cores) as pool:
-		anchor_results = pool.map(backbone_sampling, arg_list, progress_bar=verbose)
+	# arg_list = list(map(lambda template_index: (template_index, peptide_templates, receptor_template, peptide, anchors, anchor_status, anchor_selection, rcd_num_loops, RCD_dist_tol, filestore), 
+	# 					list(range(peptide_templates.shape[0]))))
+	# with WorkerPool(n_jobs=num_cores) as pool:
+	# 	anchor_results = pool.map(backbone_sampling, arg_list, progress_bar=verbose)
+	anchor_results = [backbone_sampling(0, peptide_templates, receptor_template, peptide, anchors, anchor_status, anchor_selection, rcd_num_loops, RCD_dist_tol, filestore, segment_idx is not None)]
 
 	# 3. LOOP SCORING LOOP
 	if verbose: print("Scoring the sampled loops...")
@@ -342,6 +391,8 @@ def apegen(args):
 		print("There is something wrong with the receptor file... Check the logs! Aborting...")
 		sys.exit(0)
 	
+	import pdb; pdb.set_trace()
+	
 	if verbose: print("Performing peptide refinement and scoring. This may take a while...")
 	arg_list = []
 	for i, pep_index in enumerate(loop_index_list):
@@ -362,6 +413,7 @@ def apegen(args):
 	create_csv_from_list_of_files(filestore + '/4_SMINA_data/total_results.csv', glob.glob(filestore + '/4_SMINA_data/05_per_peptide_results/*.log'))
 	results_csv = pretty_print_analytics(filestore + '/4_SMINA_data/total_results.csv', verbose=verbose)
 	results_csv.to_csv(temp_files_storage + '/successful_conformations_statistics.csv', index=False)
+	import pdb; pdb.set_trace()
 
 	# OpenMM step
 	if(score_with_openmm and results_csv.shape[0] > 0):
@@ -433,6 +485,7 @@ def apegen(args):
 							filestore + '/5_final_conformations',
 							query="pMHC_")
 
+	import pdb; pdb.set_trace()
 	# Control whether there are no conformations. If they do, store the best one and continue.
 	# If not, either abort or force restart (for round one)
 	if(results_csv.shape[0] == 0):
