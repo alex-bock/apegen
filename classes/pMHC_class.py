@@ -42,7 +42,7 @@ class pMHC(object):
 
 		p1.stop()
 	
-	def align(self, reference, filestore, template_index):
+	def align(self, reference, filestore, template_index, superpose_peptide):
 		new_filestore = filestore + '/1_alignment_files/' + str(template_index)
 
 		p1 = pymol2.PyMOL()
@@ -51,7 +51,10 @@ class pMHC(object):
 		p1.cmd.load(reference.pdb_filename, "mobile")
 		p1.cmd.load(self.pdb_filename, "ref")
 
-		p1.cmd.align("mobile & chain A", "ref & chain A")
+		if superpose_peptide:
+			p1.cmd.pair_fit("/mobile//C//CA", "/ref//C//CA")
+		else:
+			p1.cmd.align("mobile & chain A", "ref & chain A")
 
 		self.pdb_filename = new_filestore + '/receptor.pdb'
 		reference.pdb_filename = new_filestore + '/peptide.pdb'
